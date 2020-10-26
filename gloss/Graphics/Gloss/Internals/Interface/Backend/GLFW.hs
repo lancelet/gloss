@@ -15,6 +15,8 @@ import Graphics.Gloss.Data.Display
 import qualified Graphics.UI.GLFW          as GLFW
 import qualified Graphics.Rendering.OpenGL as GL
 import qualified Control.Exception         as X
+import Debug.Trace (traceM)
+import Graphics.Rendering.OpenGL                        (($=))
 
 
 -- [Note: FreeGlut]
@@ -58,7 +60,7 @@ data GLFWState
         , idle          :: IO ()
 
         -- | The Window Handle
-        , winHdl        :: GLFW.Window 
+        , winHdl        :: GLFW.Window
         }
 
 
@@ -98,6 +100,11 @@ instance Backend GLFWState where
 initializeGLFW :: IORef GLFWState -> Bool-> IO ()
 initializeGLFW _ debug
  = do
+        traceM "using GLFW"
+
+        let simpleErrorCallback e s = putStrLn $ unwords [ show e, show s ]
+        GLFW.setErrorCallback (Just simpleErrorCallback)
+
         _                   <- GLFW.init
         glfwVersion         <- GLFW.getVersion
 
@@ -131,15 +138,20 @@ openWindowGLFW
         -> IO ()
 
 openWindowGLFW ref (InWindow title (sizeX, sizeY) pos)
- = do   win <- GLFW.createWindow 
-                sizeX
-                sizeY
-                title
-                Nothing
-                Nothing 
+ = do   maybeWin <- GLFW.createWindow
+                        sizeX
+                        sizeY
+                        title
+                        Nothing
+                        Nothing
 
-        modifyIORef' ref (\s -> s { winHdl = fromJust win})
-        uncurry (GLFW.setWindowPos (fromJust win)) pos
+        case maybeWin of
+                Just win -> do
+                        modifyIORef' ref (\s -> s { winHdl = win })
+                        uncurry (GLFW.setWindowPos win) pos
+                        GLFW.makeContextCurrent maybeWin
+                Nothing ->
+                        error "Could not create a GLFW window"
 
         -- Try to enable sync-to-vertical-refresh by setting the number
         -- of buffer swaps per vertical refresh to 1.
@@ -152,20 +164,24 @@ openWindowGLFW ref FullScreen
         let sizeX = GLFW.videoModeWidth (fromJust vmode)
         let sizeY = GLFW.videoModeHeight (fromJust vmode)
 
-        win <- GLFW.createWindow 
-                sizeX
-                sizeY
-                ""
-                mon
-                Nothing 
+        maybeWin <- GLFW.createWindow
+                        sizeX
+                        sizeY
+                        ""
+                        mon
+                        Nothing
 
-        modifyIORef' ref (\s -> s { winHdl = fromJust win})
+        case maybeWin of
+                Just win -> do
+                        modifyIORef' ref (\s -> s { winHdl = win })
+                        GLFW.makeContextCurrent maybeWin
+                        GLFW.setCursorInputMode win GLFW.CursorInputMode'Normal
+                Nothing ->
+                        error "Could not create a GLFW window"
 
         -- Try to enable sync-to-vertical-refresh by setting the number
         -- of buffer swaps per vertical refresh to 1.
         GLFW.swapInterval 1
-        --GLFW.enableMouseCursor
-        GLFW.setCursorInputMode (fromJust win) GLFW.CursorInputMode'Normal
 
 
 windowHandle :: IORef GLFWState -> IO GLFW.Window
@@ -179,10 +195,10 @@ dumpStateGLFW :: IORef GLFWState -> IO ()
 dumpStateGLFW ref
  = do   win         <- windowHandle ref
         (ww,wh)     <- GLFW.getWindowSize win
-        
+
 -- GLFW-b does not provide a general function to query windowHints
 -- could be added by adding additional getWindowHint which
--- uses glfwGetWindowAttrib behind the scenes as has been done 
+-- uses glfwGetWindowAttrib behind the scenes as has been done
 -- already for e.g. getWindowVisible which uses glfwGetWindowAttrib
 {-
         r           <- GLFW.getWindowHint NumRedBits
@@ -240,6 +256,10 @@ callbackDisplay stateRef callbacks
  = do  -- clear the display
         GL.clear [GL.ColorBuffer, GL.DepthBuffer]
         GL.color $ GL.Color4 0 0 0 (1 :: GL.GLfloat)
+
+        state <- readIORef stateRef
+        (width, height) <- GLFW.getFramebufferSize (winHdl state)
+        GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral width) (fromIntegral height))
 
         -- get the display callbacks from the chain
         let funs  = [f stateRef | (Display f) <- callbacks]
@@ -360,9 +380,9 @@ callbackChar
 callbackChar stateRef callbacks win char -- keystate
  = do   (GLFWState mods pos _ _ _ _ _) <- readIORef stateRef
         let key'      = charToSpecial char
-        -- TODO: is this correct? GLFW does not provide the keystate 
+        -- TODO: is this correct? GLFW does not provide the keystate
         -- in a character callback, here we asume that its pressed
-        let keystate = True 
+        let keystate = True
 
         -- Only key presses of characters are passed to this callback,
         -- character key releases are caught by the 'keyCallback'. This is an
@@ -382,7 +402,7 @@ callbackChar stateRef callbacks win char -- keystate
 callbackMouseButton
         :: IORef GLFWState -> [Callback]
         -> GLFW.MouseButtonCallback -- = Window -> MouseButton -> MouseButtonState -> ModifierKeys -> IO ()
-        
+
 callbackMouseButton stateRef callbacks win key keystate modifier
  = do   (GLFWState mods pos _ _ _ _ _) <- readIORef stateRef
         let key'      = fromGLFW key
@@ -401,7 +421,7 @@ callbackMouseWheel
         -- -> Int
         -- -> IO ()
 -- ScrollCallback = Window -> Double -> Double -> IO ()
-callbackMouseWheel stateRef callbacks win x y 
+callbackMouseWheel stateRef callbacks win x y
  = do   (key, keystate)  <- setMouseWheel stateRef (floor x)
         (GLFWState mods pos _ _ _ _ _) <- readIORef stateRef
 
@@ -493,10 +513,10 @@ runMainLoopGLFW stateRef
 
   go   :: IO ()
   go
-   = 
+   =
      do win <- windowHandle stateRef
-        windowIsOpen <- GLFW.windowShouldClose win
-        when windowIsOpen
+        windowShouldClose <- GLFW.windowShouldClose win
+        unless windowShouldClose
          $ do  GLFW.pollEvents
                dirty <- fmap dirtyScreen $ readIORef stateRef
 

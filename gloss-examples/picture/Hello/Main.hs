@@ -2,16 +2,20 @@
 -- | Display "Hello World" in a window.
 --
 import Graphics.Gloss
+import Graphics.Gloss.Internals.Interface.Display (displayWithBackend)
+import Graphics.Gloss.Internals.Interface.Backend.GLFW (GLFWState)
+import Graphics.Gloss.Internals.Interface.Backend.Types (initBackendState)
 
 main :: IO ()
-main
- = display
-        (InWindow
-               "Hello World"     -- window title
-                (400, 150)       -- window size
-                (10, 10))        -- window position
-        white                    -- background color
-        picture                  -- picture to display
+main = displayWithBackend
+                (initBackendState :: GLFWState)
+                (InWindow
+                        "Hello World"     -- window title
+                        (400, 150)       -- window size
+                        (10, 10))        -- window position
+                white
+                (pure picture)
+                (pure (return ()))
 
 picture :: Picture
 picture
